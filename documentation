@@ -1,0 +1,77 @@
+**Project Title:**
+Fault-Tolerant Attitude Monitoring System Using ESP32-S3 and BNO055 with Watchdog Recovery
+
+---
+
+**Objective:**
+Design and implement a robust real-time embedded system for monitoring and maintaining the attitude (pitch, roll, yaw) of small UAVs or defense-grade aerial platforms using the ESP32-S3 and BNO055 IMU. The system ensures continuous operation by detecting and recovering from faults autonomously.
+
+---
+
+**Key Features (Phase 1 Completed):**
+
+1. **Real-Time Attitude Monitoring**
+
+   * Utilized Adafruit BNO055 IMU to measure pitch, roll, and yaw.
+   * Axis values mapped and scaled correctly for UAV orientation.
+
+2. **Sensor Failure & Anomaly Detection**
+
+   * Detected freeze conditions: if pitch/roll/yaw remain constant over multiple samples.
+   * Detected sudden spikes in orientation beyond a defined threshold.
+   * Verified IMU heartbeat and validity of data to catch hardware/software lockups.
+
+3. **Fault Classification and LED Signaling**
+
+   * GREEN LED: Normal operation
+   * YELLOW LED: Warning (minor fault such as spike or temporary freeze)
+   * RED LED: Critical fault (e.g., invalid data, sensor lock, angle out of range)
+
+4. **Automatic Recovery Mechanism**
+
+   * Soft-reset of IMU using I2C command (register write to 0x3F)
+   * Reinitialization of BNO055 after fault
+   * Fallback to ESP32-S3 watchdog timer for system reboot if recovery fails
+
+5. **Watchdog Integration**
+
+   * ESP32-S3 hardware watchdog timer configured for 4s timeout
+   * Ensures system recovers from hangs, stalls, or unresponsive loops
+
+6. **Serial Telemetry Output**
+
+   * Printed pitch, roll, yaw with timestamps
+   * Fault events and recovery status printed to Serial Monitor
+
+---
+
+**Technical Stack:**
+
+* **Microcontroller:** ESP32-S3 (Xtensa Dual-core 32-bit LX7)
+* **Sensor:** Adafruit BNO055 (9-axis absolute orientation)
+* **Communication:** I2C with configurable SDA/SCL pins
+* **Development Platform:** Arduino IDE (Phase 1), moving to ESP-IDF (Phase 2+)
+* **Fault Handling:** Watchdog ISR, IMU soft-reset, real-time fault state transitions
+
+---
+
+**Potential Extensions (Future Phases):**
+
+1. **Phase 2:** Fault event logging (black-box style ring buffer)
+2. **Phase 3:** SPIFFS/SD card integration for persistent storage
+3. **Phase 4:** Bluetooth telemetry via BLE (e.g., send to ground station app)
+4. **Phase 5:** Redundant IMU or cross-check with GPS/magnetometer
+5. **Phase 6:** DO-178C/ISO26262-inspired safety classification system with modular codebase
+
+---
+
+**Outcome:**
+A fully operational, realistic fault-tolerant attitude monitoring prototype inspired by aerospace-grade reliability principles. Suitable for UAVs, defense payloads, or any safety-critical embedded system where autonomous recovery is required.
+
+---
+
+
+---
+
+**Status:** ✅ Phase 1 Completed Successfully
+
