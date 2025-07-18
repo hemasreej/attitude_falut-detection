@@ -1,0 +1,221 @@
+#include <Adafruit_BNO055.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#include <esp_task_wdt.h>
+
+#define GREEN D2
+#define YELLOW D3
+#define RED D4
+#define SDA D6
+#define SCL D7
+
+#define MIN_PITCH -90
+#define MAX_PITCH 90
+#define MIN_ROLL -180
+#define MAX_ROLL 180
+#define MIN_YAW 0
+#define MAX_YAW 360
+#define MAX_ANGLE_JUMP 30.0
+#define FREEZE_COUNT_LIMIT 10
+#define FAULT_TIMEOUT_MS 1000
+#define IMU_HEART_BEAT_TIMEOUT 1000
+
+hw_timer_t *watchdogTimer = NULL;
+Adafruit_BNO055 bno = Adafruit_BNO055(55);
+
+unsigned long lastUpdate = 0;
+float lastPitch = 0, lastRoll = 0, lastYaw = 0;
+int freezeCount = 0;
+unsigned long lastIMUUpdate = 0;
+unsigned long faultStartTime = 0;
+
+bool isMinorFault = false;
+bool isMajorFault = false;
+bool isCriticalFault = false;
+
+// Function Declarations
+bool initializeIMU();
+bool checkSystemStatus();
+void attemptRecovery();
+void signalNormal();
+void signalWarning();
+void signalFault();
+void IRAM_ATTR watchdogISR();
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Wire.begin(SDA, SCL);
+
+  pinMode(GREEN, OUTPUT);
+  pinMode(YELLOW, OUTPUT);
+  pinMode(RED, OUTPUT);
+  signalNormal();
+
+  Serial.println("ESP reset reason");
+  Serial.println((int)esp_reset_reason());
+
+  if (!initializeIMU()) {
+    Serial.println("CRITICAL_FAULT: IMU not detected");
+    signalFault();
+    while (1); // Halt system
+  } else {
+    bno.setExtCrystalUse(true);
+  }
+
+  delay(1000);
+
+  // Initialize Watchdog Timer
+  watchdogTimer = timerBegin(0, 80, true); // 1 us tick
+  timerAttachInterrupt(watchdogTimer, &watchdogISR, true);
+  timerAlarmWrite(watchdogTimer, 4000000, false); // 4s timeout
+  timerAlarmEnable(watchdogTimer);
+}
+
+void loop() {
+  timerWrite(watchdogTimer, 0); // Reset watchdog
+
+  float pitch = 0, roll = 0, yaw = 0;
+  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  yaw   = euler.x();
+  roll  = euler.y();
+  pitch = euler.z();
+
+  if (isnan(pitch) || isnan(roll) || isnan(yaw)) {
+    Serial.println("CRITICAL_FAULT: Invalid IMU data (NaN)");
+    attemptRecovery();
+    return;
+  }
+
+  lastIMUUpdate = millis(); // Update immediately on valid read
+
+  if ((millis() - lastIMUUpdate) > IMU_HEART_BEAT_TIMEOUT) {
+    Serial.println("CRITICAL_FAULT: IMU heartbeat timeout");
+    attemptRecovery();
+    return;
+  }
+
+  if (!checkSystemStatus()) {
+    Serial.println("CRITICAL_FAULT: IMU system status failed");
+    attemptRecovery();
+    return;
+  }
+
+  if (pitch < MIN_PITCH || pitch > MAX_PITCH ||
+      roll < MIN_ROLL || roll > MAX_ROLL ||
+      yaw < MIN_YAW || yaw > MAX_YAW) {
+    Serial.println("CRITICAL_FAULT: IMU angle out of range");
+    attemptRecovery();
+    return;
+  }
+
+  // Spike Detection
+  isMinorFault = false;
+  if (abs(pitch - lastPitch) > MAX_ANGLE_JUMP ||
+      abs(roll - lastRoll) > MAX_ANGLE_JUMP ||
+      abs(yaw - lastYaw) > MAX_ANGLE_JUMP) {
+    isMinorFault = true;
+    Serial.println("MINOR_FAULT: Sudden angle spike");
+  }
+
+  // Freeze Detection
+  isMajorFault = false;
+  if (pitch == lastPitch && roll == lastRoll && yaw == lastYaw) {
+    freezeCount++;
+    if (freezeCount >= FREEZE_COUNT_LIMIT) {
+      isMajorFault = true;
+      if (faultStartTime == 0) faultStartTime = millis();
+    }
+  } else {
+    freezeCount = 0;
+    faultStartTime = 0;
+  }
+
+  if (isMajorFault && (millis() - faultStartTime > FAULT_TIMEOUT_MS)) {
+    Serial.println("CRITICAL_FAULT: Persistent IMU freeze");
+    attemptRecovery();
+    return;
+  }
+
+  if (isMinorFault || isMajorFault) {
+    signalWarning();
+  } else {
+    signalNormal();
+  }
+
+  Serial.printf("pitch: %.2f | roll: %.2f | yaw: %.2f\n", pitch, roll, yaw);
+
+  lastPitch = pitch;
+  lastRoll = roll;
+  lastYaw = yaw;
+
+  delay(1000); // 1 Hz rate
+}
+
+bool initializeIMU() {
+  if (!bno.begin()) return false;
+  bno.setExtCrystalUse(true);
+  delay(1000); // Give time to stabilize
+  return true;
+}
+
+bool checkSystemStatus() {
+  uint8_t system_status, self_test, system_error;
+  bno.getSystemStatus(&system_status, &self_test, &system_error);
+  if (system_status != 5 || system_error != 0) {
+    Serial.print("System status: ");
+    Serial.println(system_status);
+    Serial.print("Error code: ");
+    Serial.println(system_error);
+    return false;
+  }
+  return true;
+}
+
+void attemptRecovery() {
+  signalFault();
+  Serial.println("Attempting IMU soft reset...");
+
+  // Optional suspend mode
+  // bno.enterSuspendMode();
+  // delay(50);
+
+  Wire.beginTransmission(0x28);
+  Wire.write(0x3F); // OPR_MODE
+  Wire.write(0x20); // Reset command
+  Wire.endTransmission();
+  delay(1000);
+
+  if (initializeIMU()) {
+    Serial.println("IMU recovery successful");
+    signalNormal();
+    freezeCount = 0;
+    faultStartTime = 0;
+  } else {
+    Serial.println("Recovery failed → Watchdog will reset");
+    signalFault();
+    delay(2000); // Let watchdog trip
+  }
+}
+
+void signalNormal() {
+  digitalWrite(GREEN, HIGH);
+  digitalWrite(YELLOW, LOW);
+  digitalWrite(RED, LOW);
+}
+
+void signalWarning() {
+  digitalWrite(GREEN, LOW);
+  digitalWrite(YELLOW, HIGH);
+  digitalWrite(RED, LOW);
+}
+
+void signalFault() {
+  digitalWrite(GREEN, LOW);
+  digitalWrite(YELLOW, LOW);
+  digitalWrite(RED, HIGH);
+}
+
+void IRAM_ATTR watchdogISR() {
+  ESP.restart();
+}
