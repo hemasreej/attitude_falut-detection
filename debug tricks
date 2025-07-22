@@ -14,3 +14,17 @@ plaintext
 Copy
 Edit
 CONFIG_FREERTOS_HZ=1000
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+I (38309) MAIN: Processing telemetry data...
+I (<time_in_ms>) <TAG>: <message>
+
+Breakdown:
+
+I: means Info level log (other levels: E for Error, W for Warning, etc.)
+
+(38309): this is the time in milliseconds since the ESP32 booted
+
+MAIN: your tag from #define TAG "MAIN"
+
+Processing telemetry data...: your message from ESP_LOGI(...)
