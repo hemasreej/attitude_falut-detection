@@ -1,0 +1,16 @@
+🔧 How to Properly Set It - portTICK problem
+Run idf.py menuconfig
+
+Go to:
+Component config > FreeRTOS > Tick rate (Hz)
+
+Set it to 1000
+
+Save and exit
+
+Then it will generate sdkconfig with:
+
+plaintext
+Copy
+Edit
+CONFIG_FREERTOS_HZ=1000
